@@ -54,22 +54,19 @@ Use the environment check results from step 1 to decide which runtime to use:
   - Docker on macOS: install via `brew install --cask docker`, then `open -a Docker` and wait for it to start. If brew not available, direct to Docker Desktop download.
   - Docker on Linux: install with `curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER`. Note: user may need to log out/in for group membership.
 
-### 3b. Docker conversion gate (REQUIRED before building)
+### 3b. Apple Container conversion gate (if needed)
 
-**If the chosen runtime is Docker**, you MUST check whether the source code has already been converted from Apple Container to Docker. Do NOT skip this step. Run:
+**If the chosen runtime is Apple Container**, you MUST check whether the source code has already been converted from Docker to Apple Container. Do NOT skip this step. Run:
 
 ```bash
-grep -q 'container system status' src/index.ts && echo "NEEDS_CONVERSION" || echo "ALREADY_CONVERTED"
+grep -q "CONTAINER_RUNTIME_BIN = 'container'" src/container-runtime.ts && echo "ALREADY_CONVERTED" || echo "NEEDS_CONVERSION"
 ```
 
-Check these three files for Apple Container references:
-- `src/index.ts` — look for `container system status` or `ensureContainerSystemRunning`
-- `src/container-runner.ts` — look for `spawn('container'`
-- `container/build.sh` — look for `container build`
+**If NEEDS_CONVERSION**, the source code still uses Docker as the runtime. You MUST run the `/convert-to-apple-container` skill NOW, before proceeding to the build step.
 
-**If ANY of those Apple Container references exist**, the source code has NOT been converted. You MUST run the `/convert-to-docker` skill NOW, before proceeding to the build step. Do not attempt to build the container image until the conversion is complete.
+**If ALREADY_CONVERTED**, the code already uses Apple Container. Continue to 3c.
 
-**If none of those references exist** (i.e. the code already uses `docker info`, `spawn('docker'`, `docker build`), the conversion has already been done. Continue to 3c.
+**If the chosen runtime is Docker**, no conversion is needed — Docker is the default. Continue to 3c.
 
 ### 3c. Build and test
 
