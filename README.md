@@ -164,6 +164,45 @@ Read the full architecture at [docs.nanoclaw.dev/concepts/architecture](https://
 | `src/db.ts`                  | SQLite operations — messages, groups, sessions, state           |
 | `groups/{name}/CLAUDE.md`    | Per-group memory (isolated)                                     |
 
+## Skills and plugins inside containers
+
+Container agents do **not** inherit your host Claude Code environment. They see only what's mounted. This is intentional — each group gets a curated, isolated slate.
+
+| Source                                                          | Visible to container? | Scope                         |
+| --------------------------------------------------------------- | --------------------- | ----------------------------- |
+| `~/.claude/plugins/` (host user plugins)                        | No                    | Host-only                     |
+| `~/.claude/skills/` (host user skills)                          | No                    | Host-only                     |
+| `.claude/skills/` in the repo (`/setup`, `/add-telegram`, etc.) | Yes                   | Main group only               |
+| `.mcp.json` in the repo                                         | Yes                   | Main group only               |
+| `container/skills/` (e.g. `agent-browser`, `slack-formatting`)  | Yes                   | Every group — synced at spawn |
+| `groups/{name}/CLAUDE.md`                                       | Yes                   | That group only               |
+
+### Make a host plugin available to containers
+
+1. Locate the skill directory inside your host plugin, for example:
+
+   ```
+   ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/<skill-name>
+   ```
+
+2. Copy it into `container/skills/`:
+
+   ```bash
+   cp -R ~/.claude/plugins/cache/.../<skill-name> container/skills/
+   ```
+
+3. Rebuild the container image:
+
+   ```bash
+   ./container/build.sh
+   ```
+
+4. Restart the service — macOS: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`; Linux: `systemctl --user restart nanoclaw`.
+
+**Success indicator:** the skill appears under `/home/node/.claude/skills/` inside the next spawned container. Confirm with `container logs <container-name>` (Apple Container) or `docker logs <container-name>`.
+
+**Do not mount `~/.claude/plugins/` directly.** That bypasses the isolation model — every group would gain access to anything your user account can do in Claude Code.
+
 ## Replicate our setup — macOS 26 + Apple Container + custom Anthropic endpoint
 
 <details>
