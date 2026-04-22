@@ -12,8 +12,24 @@ import { logger } from './logger.js';
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'container';
 
-/** Hostname containers use to reach the host machine. */
-export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
+/**
+ * Hostname or IP containers use to reach the host machine.
+ * Apple Container on macOS: host.docker.internal does NOT resolve inside
+ * containers (as of 0.11), so we use the bridge100 gateway IP directly.
+ * Detected from the bridge0/bridge100 interface, falling back to the
+ * default 192.168.64.1.
+ */
+export const CONTAINER_HOST_GATEWAY = detectHostGateway();
+
+function detectHostGateway(): string {
+  const ifaces = os.networkInterfaces();
+  const bridge = ifaces['bridge100'] || ifaces['bridge0'];
+  if (bridge) {
+    const ipv4 = bridge.find((a) => a.family === 'IPv4');
+    if (ipv4) return ipv4.address;
+  }
+  return '192.168.64.1';
+}
 
 /**
  * Address the credential proxy binds to.
