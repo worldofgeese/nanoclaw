@@ -43,6 +43,10 @@ export function startCredentialProxy(
   );
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
+  // Preserve the upstream path prefix (e.g. LEGO's AMMA routes have /claude).
+  // Normalize to '' (not '/') so we concatenate cleanly with req.url.
+  const upstreamBasePath =
+    upstreamUrl.pathname === '/' ? '' : upstreamUrl.pathname.replace(/\/$/, '');
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -83,7 +87,7 @@ export function startCredentialProxy(
           {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
+            path: `${upstreamBasePath}${req.url}`,
             method: req.method,
             headers,
           } as RequestOptions,
