@@ -79,16 +79,11 @@ function buildVolumeMounts(
       readonly: true,
     });
 
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the OneCLI gateway, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
+    // .env shadowing disabled: Apple Container only supports directory mounts,
+    // not file mounts like Docker's /dev/null overlay. The skill/apple-container
+    // branch handles this via `mount --bind` inside the container entrypoint
+    // (requires root + setpriv drop). Until that's adopted, main-group agents can
+    // read host secrets from `.env` via the readonly project mount.
 
     // Main gets writable access to the store (SQLite DB) so it can
     // query and write to the database directly.
