@@ -46,6 +46,30 @@ Claude Code gives you a capable coding agent in your terminal. NanoClaw gives yo
 
 If none of those matter to you, stay in the terminal with Claude Code. NanoClaw earns its keep specifically when you want Claude Code reachable from a phone and the apps around it.
 
+## How you interact: two paths
+
+NanoClaw runs alongside Claude Code without replacing it. Knowing which path you're on clarifies what the agent can and cannot see.
+
+**Direct (terminal):**
+
+```
+you → `claude` in the repo → host environment
+```
+
+Full access to your `~/.claude/plugins/`, user skills, `.mcp.json`, and filesystem. Use this for development, setup, and editing the repo. No container, no sandbox.
+
+**Chat-driven (NanoClaw):**
+
+```
+WhatsApp / Telegram / etc. → NanoClaw → fresh container → `claude` inside → reply
+```
+
+Sandboxed: the container mounts only the group's workspace and a curated skill slate. No host plugins, no host keys, no host filesystem. Ephemeral — the container idles 30 minutes, then dies; the next message spawns a fresh one.
+
+The NanoClaw background service (`launchctl list | grep nanoclaw` on macOS; `systemctl --user status nanoclaw` on Linux) sits idle waiting for chat messages and only then spawns a container. Your direct `claude` sessions are unaffected.
+
+> **Opt-in exception:** the `/claw` skill installs a `claw` CLI that fires a NanoClaw-sandboxed run from your terminal. If you did not run `/claw`, your terminal sessions take the direct path.
+
 ## Prerequisites
 
 Before installing, make sure you have:
