@@ -227,6 +227,51 @@ Container agents do **not** inherit your host Claude Code environment. They see 
 
 **Do not mount `~/.claude/plugins/` directly.** That bypasses the isolation model — every group would gain access to anything your user account can do in Claude Code.
 
+## Keep the service running
+
+### Automatic startup
+
+NanoClaw starts on login via `launchctl` (macOS) or `systemd` (Linux). `KeepAlive=true` in the plist restarts it if it crashes, and Apple Container registers its own launch agent when you first run `container system start`. No manual intervention is needed after a reboot — once installed, the stack comes up on every login.
+
+### Persist the macOS 26 container networking
+
+The `sysctl` and `pfctl` commands in step 3 of [Replicate our setup](#replicate-our-setup--macos-26--apple-container--custom-anthropic-endpoint) reset on reboot. Persist them once:
+
+1. Create `/etc/sysctl.conf` with the forwarding flag:
+
+   ```bash
+   echo "net.inet.ip.forwarding=1" | sudo tee /etc/sysctl.conf
+   ```
+
+2. Add the NAT rule to `/etc/pf.conf` **before** the `scrub-anchor "com.apple/*"` line (NAT must come before scrub per [pf.conf ordering rules](https://www.openbsd.org/faq/pf/filter.html)):
+
+   ```
+   # nanoclaw: NAT for Apple Container bridge (192.168.64.0/24 -> en0)
+   nat on en0 from 192.168.64.0/24 to any -> (en0)
+   ```
+
+3. Reload pf:
+
+   ```bash
+   sudo pfctl -f /etc/pf.conf
+   ```
+
+**Success indicator:** after a reboot, `sysctl net.inet.ip.forwarding` prints `1`, and a curl from inside a test container reaches the internet. See [docs/APPLE-CONTAINER-NETWORKING.md](docs/APPLE-CONTAINER-NETWORKING.md) for background.
+
+### Keep the Mac awake with the lid closed
+
+macOS sleeps on lid-close by default. Pick one:
+
+| Option                          | How it works                                                                                                  | When to use                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **Clamshell mode** *(recommended)* | macOS keeps running with the lid closed when **all three** are present: AC power, external display, external keyboard/mouse. | You already dock to an external monitor.                                    |
+| [Amphetamine](https://apps.apple.com/us/app/amphetamine/id937984704)                    | Free App Store app. Menu-bar toggle with triggers (e.g. "keep awake while an app runs").                     | No external display, want per-session control.                              |
+| `sudo pmset -a disablesleep 1`  | Native macOS. Disables all sleep, lid-closed included.                                                        | Desktop-style always-on-AC setup. Drains battery fast and runs hot off AC.  |
+
+For clamshell mode with Bluetooth peripherals, enable *System Settings → Bluetooth → (device) → ⓘ → Allow to wake computer*, otherwise the Mac may sleep after input idles.
+
+**Success indicator:** dock the Mac, close the lid, wait 30 seconds, then message your chat. A reply within ~10 seconds confirms the service is still serving.
+
 ## Replicate our setup — macOS 26 + Apple Container + custom Anthropic endpoint
 
 <details>
