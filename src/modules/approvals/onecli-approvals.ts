@@ -84,6 +84,13 @@ export function resolveOneCLIApproval(approvalId: string, selectedOption: string
 
 export function startOneCLIApprovalHandler(deliveryAdapter: ChannelDeliveryAdapter): void {
   if (handle) return;
+  // Skip when OneCLI isn't configured — this install uses the native
+  // credential proxy (src/credential-proxy.ts) instead. Without a URL,
+  // configureManualApproval would long-poll a dead endpoint.
+  if (!ONECLI_URL) {
+    log.info('OneCLI not configured — approval handler skipped (native credential proxy active)');
+    return;
+  }
   adapterRef = deliveryAdapter;
 
   // Sweep any rows left over from a previous process.

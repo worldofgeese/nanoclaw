@@ -10,6 +10,14 @@
 # bind mount at runtime (see src/container-runner.ts). Source-only changes
 # never require an image rebuild.
 
+# ---- Stage 1: Build Decapod from source -------------------------------------
+# Decapod is the governance runtime CLI. Requires Rust 1.87+ for let-chains.
+FROM rust:latest AS decapod-builder
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN cargo install decapod --locked
+# Binary lands at /usr/local/cargo/bin/decapod
+
+# ---- Stage 2: Runtime -------------------------------------------------------
 FROM node:22-slim
 
 # ---- Build-time arguments ----------------------------------------------------
@@ -69,6 +77,10 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
     install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
     rm -rf /root/.bun
+
+# ---- Decapod binary ---------------------------------------------------------
+# Copy the statically-built binary from the Rust builder stage.
+COPY --from=decapod-builder /usr/local/cargo/bin/decapod /usr/local/bin/decapod
 
 # ---- agent-runner deps -------------------------------------------------------
 # Deps are cached independently of CLI versions. Source is NOT baked in —

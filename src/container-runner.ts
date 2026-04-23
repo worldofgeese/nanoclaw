@@ -7,20 +7,24 @@ import { ChildProcess, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { OneCLI } from '@onecli-sh/sdk';
-
 import {
   CONTAINER_IMAGE,
   CONTAINER_IMAGE_BASE,
   CONTAINER_INSTALL_LABEL,
+  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
-  ONECLI_API_KEY,
-  ONECLI_URL,
   TIMEZONE,
 } from './config.js';
 import { readContainerConfig, writeContainerConfig } from './container-config.js';
-import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
+import {
+  CONTAINER_HOST_GATEWAY,
+  CONTAINER_RUNTIME_BIN,
+  hostGatewayArgs,
+  readonlyMountArgs,
+  stopContainer,
+} from './container-runtime.js';
+import { readEnvFile } from './env.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
@@ -38,8 +42,6 @@ import {
 } from './providers/provider-container-registry.js';
 import { markContainerRunning, markContainerStopped, sessionDir, writeSessionRouting } from './session-manager.js';
 import type { AgentGroup, Session } from './types.js';
-
-const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
 /** Active containers tracked by session ID. */
 const activeContainers = new Map<string, { process: ChildProcess; containerName: string }>();
@@ -403,21 +405,31 @@ async function buildContainerArgs(
     }
   }
 
-  // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
-  // are routed through the agent vault for credential injection.
-  try {
-    if (agentIdentifier) {
-      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-    }
-    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-    if (onecliApplied) {
-      log.info('OneCLI gateway applied', { containerName });
-    } else {
-      log.warn('OneCLI gateway not applied — container will have no credentials', { containerName });
-    }
-  } catch (err) {
-    log.warn('OneCLI gateway error — container will have no credentials', { containerName, err });
+  // Native credential proxy — containers route API calls through the host
+  // proxy at http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}, which
+  // injects real credentials from the host's .env. Containers never see keys.
+  const credentialProxyUrl = `http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`;
+  args.push('-e', `ANTHROPIC_BASE_URL=${credentialProxyUrl}`);
+  // Placeholder token — the proxy replaces this with the real OAuth token or
+  // injects x-api-key on every request. Claude Code requires a non-empty
+  // token to bootstrap.
+  args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+
+  // Forward claude-code model overrides from .env so gateways that expose
+  // custom model IDs (e.g. LEGO via AMMA) resolve correctly inside the container.
+  const modelEnv = readEnvFile([
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  ]);
+  for (const [key, value] of Object.entries(modelEnv)) {
+    if (value) args.push('-e', `${key}=${value}`);
   }
+
+  // agentIdentifier was the OneCLI agent id; kept in signature for future use.
+  void agentIdentifier;
 
   // Host gateway
   args.push(...hostGatewayArgs());
