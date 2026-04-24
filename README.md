@@ -72,20 +72,107 @@ bash nanoclaw.sh
 
 ## Usage
 
-Talk to your assistant with the trigger word (default: `@Andy`):
+Talk to your assistant with the trigger word (default: `@Andy`). Everything below is a chat command — no terminal needed.
+
+### Basic
 
 ```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
+@Andy send an overview of the sales pipeline every weekday morning at 9am
+@Andy review the git history for the past week each Friday and report drift
+@Andy every Monday at 8am, compile AI news from Hacker News and TechCrunch and brief me
 ```
 
-From a channel you own or administer, you can manage groups and tasks:
+From a channel you own or administer:
 ```
 @Andy list all scheduled tasks across groups
 @Andy pause the Monday briefing task
-@Andy join the Family Chat group
 ```
+
+### Spawn specialized agents
+
+Agents are persistent specialists with their own container, workspace, memory, and session — not ephemeral task runners.
+
+```
+@Andy create a "Scout" agent that researches web topics and reports back with sources
+@Andy spawn a "Calendar" agent that tracks my recurring tasks and schedules
+```
+
+Under the hood this calls the `create_agent` MCP tool. The new agent gets its own folder under `groups/<name>/` and becomes a destination Andy (and you) can message directly.
+
+### Agent-to-agent (A2A) communication
+
+Once multiple agents exist, hand off work between them:
+
+```
+@Andy have Scout research what's new in WebGPU in 2026 and summarize in 3 bullets
+@Andy ask Calendar to block Thursday 2-3pm for the Scout briefing
+```
+
+Andy calls `send_message({ to: "Scout", ... })`. Scout works in the background and replies through the normal delivery path. You can also DM Scout directly — each agent is its own addressable endpoint.
+
+### Install packages / MCP servers from chat
+
+No editing container/Dockerfile. Ask for a capability:
+
+```
+@Andy install ffmpeg so you can process audio files
+@Andy add the MCP server for long-term memory from modelcontextprotocol/servers
+```
+
+An approval card lands in your DM (native inline buttons on Telegram / Discord / Slack). Tap **Approve** → host rebuilds the per-agent-group container image and restarts. Persists across sessions, not just this turn.
+
+### Human-in-the-loop approvals
+
+You don't trigger these — they trigger you. Approval cards arrive in your DM whenever an agent proposes a sensitive action:
+
+- Package/MCP install (above)
+- An unknown user messaging your NanoClaw (when `unknown_sender_policy=request_approval`)
+- Credentialed actions (gateway-side policy; dormant in this fork since we bypass OneCLI)
+
+Tap a button. That's the whole UX. The agent's turn blocks until you decide.
+
+### Multi-user access
+
+Share your NanoClaw with someone: give them the bot's `@handle`. When they DM, you get an approval card asking whether to grant them access. On approve, they get their own session + memory + context — they never see yours.
+
+Per-messaging-group `unknown_sender_policy`:
+- `strict` — drop messages from unknown senders silently
+- `request_approval` — DM you an approval card (recommended default)
+- `public` — auto-accept
+
+Ask Andy to change it:
+
+```
+@Andy set this group's unknown-sender policy to request_approval
+```
+
+### Add more channels
+
+From the host's Claude Code:
+
+```
+/add-slack      /add-discord    /add-github
+/add-matrix     /add-teams      /add-linear
+/add-gchat      /add-webex      /add-resend
+/add-imessage   /add-wechat     /add-whatsapp
+```
+
+Each skill is idempotent: copies the adapter from `upstream/channels`, wires self-registration, pins the dependency, rebuilds. Then `/manage-channels` to pick isolation mode (separate agents per channel, shared agent with independent sessions, or one merged session across channels) and wire it to an existing or new agent group.
+
+### Swap agent providers per-group
+
+Per-agent-group provider config. Default is Claude; install alternatives with `/add-opencode` (OpenRouter / OpenAI / Google / DeepSeek / DeepInfra), `/add-ollama-provider` (local open-weight), or `/add-codex` (OpenAI Codex with your ChatGPT subscription or API key).
+
+```
+@Andy switch the Scout agent to opencode with openrouter + gemini-2.5-pro
+@Andy have Calendar run on ollama with qwen2.5-coder-32b locally
+```
+
+### One-line starter
+
+Paste this into Telegram to exercise `create_agent` + A2A + web research in one go:
+
+> Create a "Scout" agent that researches web topics and reports back with sources. Once it's up, have Scout summarize this week's top news in AI infrastructure.
 
 ## Customizing
 
