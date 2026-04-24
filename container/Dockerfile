@@ -120,6 +120,12 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# ---- Shared CLAUDE.md -------------------------------------------------------
+# Baked in because Apple Container 0.11 cannot bind-mount a single file.
+# The host's group-composed CLAUDE.md symlinks `.claude-shared.md` → this path.
+# Rebuild the image when container/CLAUDE.md changes.
+COPY CLAUDE.md /app/CLAUDE.md
+
 # ---- Workspace + permissions -------------------------------------------------
 RUN mkdir -p /workspace/group /workspace/extra && \
     chown -R node:node /workspace && \

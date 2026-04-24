@@ -180,6 +180,26 @@ export function getProcessingClaims(outDb: Database.Database): ProcessingClaim[]
     .all() as ProcessingClaim[];
 }
 
+/**
+ * Delete stale 'processing' claims. Safe to call from the host ONLY when the
+ * container is known dead (orphan cleanup, post-reset in host-sweep). The
+ * single-writer invariant on outbound.db holds because only one party is
+ * writing at a time — the container is stopped, so the host is the sole writer.
+ *
+ * Zombies otherwise cause the sweep to loop forever: resetStuckProcessingRows
+ * resets inbound backoff but leaves the claim, so the next tick sees the same
+ * claim and resets again without ever waking a fresh container.
+ */
+export function clearStaleProcessingClaims(outDb: Database.Database, messageIds: string[]): void {
+  if (messageIds.length === 0) return;
+  const stmt = outDb.prepare(
+    "DELETE FROM processing_ack WHERE message_id = ? AND status = 'processing'",
+  );
+  outDb.transaction(() => {
+    for (const id of messageIds) stmt.run(id);
+  })();
+}
+
 export interface ContainerState {
   current_tool: string | null;
   tool_declared_timeout_ms: number | null;

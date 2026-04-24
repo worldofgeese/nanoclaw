@@ -23,6 +23,17 @@
 
 NanoClaw provides that same core functionality, but in a codebase small enough to understand: one process and a handful of files. Claude agents run in their own Linux containers with filesystem isolation, not merely behind permission checks.
 
+## About This Fork
+
+This is `worldofgeese/nanoclaw` — a customized fork of [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) v2, tailored for Apple Silicon macOS + LEGO's AMMA gateway. Deviations from upstream trunk:
+
+- **Apple Container runtime** instead of Docker. v2 ships with Docker as default; this fork replaces it with Apple Container for a lighter native runtime. Fixes for Apple Container 0.11 specifics (no file-level bind mounts, `WORKDIR` override, bridge100 gateway detection) are in `src/container-runtime.ts` and `src/container-runner.ts`.
+- **Native credential proxy** instead of OneCLI. Agents never see raw API keys — the proxy injects auth at request time. Supports Anthropic's OAuth exchange (direct `api.anthropic.com`) and a **gateway mode** for static bearer auth (LEGO AMMA, custom gateways). Opt-in via `CREDENTIAL_PROXY_GATEWAY_MODE=true` in `.env`; auto-detected when `ANTHROPIC_BASE_URL` hostname isn't `api.anthropic.com`.
+- **Decapod container skill** — a Rust-built governance runtime CLI baked into the agent image. Plus `jira` and `microsoft-to-do` container skills.
+- **Two stability fixes** applied to v2 core: `processing_ack` zombie claims are now cleared when the host-sweep resets stuck messages, and `sessions.container_status` is reset to `stopped` on startup so a killed-on-restart container doesn't wedge the sweep loop.
+
+For history and replay instructions see [`.nanoclaw-migrations/`](.nanoclaw-migrations/index.md) — captures the v1→v2 port intent so the fork can be replayed onto cleaner upstream bases later.
+
 ## Quick Start
 
 ```bash
@@ -56,8 +67,8 @@ bash nanoclaw.sh
 - **Per-agent workspace** — each agent group has its own `CLAUDE.md`, its own memory, its own container, and only the mounts you allow. Nothing crosses the boundary unless you wire it to.
 - **Scheduled tasks** — recurring jobs that run Claude and can message you back
 - **Web access** — search and fetch content from the web
-- **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation or Apple Container as a macOS-native opt-in
-- **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
+- **Container isolation** — agents are sandboxed in [Apple Container](https://github.com/apple/container) (macOS native runtime). Upstream supports Docker across macOS/Linux/WSL2 — this fork locks in Apple Container for the macOS host.
+- **Credential security** — agents never hold raw API keys. Outbound requests route through the in-process native credential proxy (`src/credential-proxy.ts`), which reads creds from `.env` and injects them at the request boundary. No external vault needed.
 
 ## Usage
 
@@ -106,9 +117,9 @@ Skills we'd like to see:
 
 ## Requirements
 
-- macOS or Linux (Windows via WSL2)
-- Node.js 20+ and pnpm 10+ (the installer will install both if missing)
-- [Docker Desktop](https://docker.com/products/docker-desktop) (macOS/Windows) or Docker Engine (Linux)
+- macOS 15+ on Apple Silicon (this fork; Windows/Linux users, use upstream)
+- Node.js 20+ and pnpm 10+
+- [Apple Container](https://github.com/apple/container/releases) 0.11+
 - [Claude Code](https://claude.ai/download) for `/customize`, `/debug`, error recovery during setup, and all `/add-<channel>` skills
 
 ## Architecture
@@ -129,7 +140,8 @@ Key files:
 - `src/delivery.ts` — polls `outbound.db`, delivers via adapter, handles system actions
 - `src/host-sweep.ts` — 60s sweep: stale detection, due-message wake, recurrence
 - `src/session-manager.ts` — resolves sessions, opens `inbound.db` / `outbound.db`
-- `src/container-runner.ts` — spawns per-agent-group containers, OneCLI credential injection
+- `src/container-runner.ts` — spawns per-agent-group containers, wires the native credential proxy URL + placeholder auth
+- `src/credential-proxy.ts` — HTTP proxy injecting real creds at request time (`.env` → upstream); supports gateway mode for bearer-auth endpoints
 - `src/db/` — central DB (users, roles, agent groups, messaging groups, wiring, migrations)
 - `src/channels/` — channel adapter infra (adapters installed via `/add-<channel>` skills)
 - `src/providers/` — host-side provider config (`claude` baked in; others via skills)
@@ -138,17 +150,23 @@ Key files:
 
 ## FAQ
 
-**Why Docker?**
+**Why Apple Container?**
 
-Docker provides cross-platform support (macOS, Linux and Windows via WSL2) and a mature ecosystem. On macOS, you can optionally switch to Apple Container via `/convert-to-apple-container` for a lighter-weight native runtime. For additional isolation, [Docker Sandboxes](docs/docker-sandboxes.md) run each container inside a micro VM.
+This fork runs on macOS Apple Silicon and uses Apple Container for a lightweight native runtime — no Docker Desktop, no daemon. Upstream supports Docker/Linux/WSL2; if you need cross-platform, use upstream and its `/convert-to-apple-container` skill only when you want the native path.
 
 **Can I run this on Linux or Windows?**
 
-Yes. Docker is the default runtime and works on macOS, Linux, and Windows (via WSL2). Just run `bash nanoclaw.sh`.
+Not this fork. Use upstream `qwibitai/nanoclaw` for non-macOS hosts.
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Credentials never enter the container — outbound API requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects authentication at the proxy level and supports rate limits and access policies. You should still review what you're running, but the codebase is small enough that you actually can. See the [security documentation](https://docs.nanoclaw.dev/concepts/security) for the full security model.
+Agents run in Apple Container VMs (Linux userland inside a macOS-managed VM), not behind application-level permission checks. They can only access explicitly mounted directories. Credentials never enter the container — outbound API requests route through the native credential proxy (`src/credential-proxy.ts`), which reads keys from `.env` on the host and injects the real bearer/`x-api-key` header per request. The container only sees a placeholder. See the [security documentation](https://docs.nanoclaw.dev/concepts/security) for upstream's broader security model.
+
+One call-out unique to Apple Container 0.11: individual file bind-mounts aren't supported, so the RO overlays upstream uses for `container.json` and the composed `CLAUDE.md` become read-write. The files are still regenerated on every spawn from trusted sources, so agent overwrites are clobbered on next wake — but it's a smaller guarantee than Docker's. See the `buildMounts` comment in `src/container-runner.ts`.
+
+**How does authentication work with LEGO AMMA / custom gateways?**
+
+Set `ANTHROPIC_BASE_URL` to the gateway URL and `ANTHROPIC_AUTH_TOKEN` to the static bearer. The proxy auto-detects gateway mode from the hostname (anything not `api.anthropic.com` is treated as a gateway) and injects `Authorization: Bearer <token>` on every request, stripping any placeholder `x-api-key` the client sends. To force gateway behavior explicitly, set `CREDENTIAL_PROXY_GATEWAY_MODE=true`.
 
 **Why no configuration files?**
 

@@ -16,6 +16,7 @@ import path from 'path';
 
 import type { OutboundFile } from './channels/adapter.js';
 import { DATA_DIR } from './config.js';
+import { getDb } from './db/connection.js';
 import { getMessagingGroup } from './db/messaging-groups.js';
 import {
   createSession,
@@ -395,4 +396,21 @@ export function markContainerIdle(sessionId: string): void {
 /** Mark a container as stopped for a session. */
 export function markContainerStopped(sessionId: string): void {
   updateSession(sessionId, { container_status: 'stopped' });
+}
+
+/**
+ * Reset all sessions to container_status='stopped'. Call at startup (after
+ * cleanupOrphans) since, by definition, no container can have survived the
+ * host process exit. Stale 'running' rows otherwise fool the host-sweep's
+ * `isContainerRunning` check into believing work is in flight and prevent
+ * it from waking a fresh container for pending messages.
+ */
+export function resetAllContainerStatusOnStartup(): void {
+  const db = getDb();
+  const result = db
+    .prepare("UPDATE sessions SET container_status = 'stopped' WHERE container_status != 'stopped'")
+    .run();
+  if (result.changes > 0) {
+    log.info('Reset stale container_status on startup', { count: result.changes });
+  }
 }

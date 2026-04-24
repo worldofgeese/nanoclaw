@@ -32,6 +32,7 @@ export function startCredentialProxy(
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'CREDENTIAL_PROXY_GATEWAY_MODE',
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
@@ -47,6 +48,21 @@ export function startCredentialProxy(
   // Normalize to '' (not '/') so we concatenate cleanly with req.url.
   const upstreamBasePath =
     upstreamUrl.pathname === '/' ? '' : upstreamUrl.pathname.replace(/\/$/, '');
+
+  // Gateway mode: inject Authorization: Bearer on every request, strip any
+  // placeholder x-api-key. Needed for gateways like LEGO AMMA that accept a
+  // static bearer and have no OAuth exchange endpoint. Explicit opt-in via
+  // CREDENTIAL_PROXY_GATEWAY_MODE=true; default is auto-detect by hostname
+  // (anything not api.anthropic.com is treated as a gateway).
+  const gatewayModeExplicit = (
+    process.env.CREDENTIAL_PROXY_GATEWAY_MODE ||
+    secrets.CREDENTIAL_PROXY_GATEWAY_MODE ||
+    ''
+  ).toLowerCase();
+  const gatewayMode =
+    gatewayModeExplicit === 'true' ||
+    gatewayModeExplicit === '1' ||
+    (gatewayModeExplicit === '' && upstreamUrl.hostname !== 'api.anthropic.com');
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -69,16 +85,19 @@ export function startCredentialProxy(
         if (authMode === 'api-key') {
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
-        } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
-            }
+        } else if (gatewayMode && oauthToken) {
+          // Gateway mode: swap any placeholder auth for Bearer <real token>
+          // on every request. No OAuth exchange endpoint upstream.
+          delete headers['x-api-key'];
+          delete headers['authorization'];
+          headers['authorization'] = `Bearer ${oauthToken}`;
+        } else if (headers['authorization']) {
+          // Anthropic-direct OAuth: only swap when the client sends
+          // Authorization (exchange request + auth probes). Post-exchange
+          // requests use x-api-key only and pass through unchanged.
+          delete headers['authorization'];
+          if (oauthToken) {
+            headers['authorization'] = `Bearer ${oauthToken}`;
           }
         }
 
@@ -110,7 +129,13 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      log.info('Credential proxy started', { port, host, authMode });
+      log.info('Credential proxy started', {
+        port,
+        host,
+        authMode,
+        gatewayMode,
+        upstream: upstreamUrl.origin + upstreamBasePath,
+      });
       resolve(server);
     });
 

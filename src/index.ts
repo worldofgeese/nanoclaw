@@ -20,6 +20,7 @@ import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, st
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
 import { log } from './log.js';
+import { resetAllContainerStatusOnStartup } from './session-manager.js';
 
 // Response + shutdown registries live in response-registry.ts to break the
 // circular import cycle: src/index.ts imports src/modules/index.js for side
@@ -75,6 +76,12 @@ async function main(): Promise<void> {
   // 2. Container runtime
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+
+  // 2a. Reset stale session.container_status. Orphan cleanup kills dead
+  // containers but doesn't update the per-session status column — without
+  // this, the host sweep sees 'running' rows from a prior host process
+  // and skips wakeContainer for pending messages.
+  resetAllContainerStatusOnStartup();
 
   // 2b. Credential proxy — containers route API calls through this for
   // credential injection. Must start before any container spawns.

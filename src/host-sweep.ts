@@ -32,6 +32,7 @@ import fs from 'fs';
 import { getActiveSessions } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import {
+  clearStaleProcessingClaims,
   countDueMessages,
   getContainerState,
   getMessageForRetry,
@@ -246,6 +247,7 @@ function resetStuckProcessingRows(
   reason: string,
 ): void {
   const claims = getProcessingClaims(outDb);
+  const clearedIds: string[] = [];
   for (const { message_id } of claims) {
     const msg = getMessageForRetry(inDb, message_id, 'pending');
     if (!msg) continue;
@@ -268,5 +270,14 @@ function resetStuckProcessingRows(
         reason,
       });
     }
+    clearedIds.push(message_id);
+  }
+
+  // Clear the zombie claims so the next sweep can actually wake a container
+  // once backoff expires. Without this, processing_ack stays 'processing'
+  // forever, the sweep keeps seeing the same claims, and dueCount never
+  // gets a chance to trigger wakeContainer.
+  if (clearedIds.length > 0) {
+    clearStaleProcessingClaims(outDb, clearedIds);
   }
 }

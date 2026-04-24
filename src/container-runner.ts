@@ -394,6 +394,12 @@ async function buildContainerArgs(
 ): Promise<string[]> {
   const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
 
+  // Override the Dockerfile's WORKDIR (/workspace/group) — that path is
+  // shadowed by the session-dir mount at /workspace and Apple Container
+  // refuses to start when the cwd doesn't exist. /workspace always exists
+  // after the mount lands.
+  args.push('--workdir', '/workspace');
+
   // Environment — only vars read by code we don't own.
   // Everything NanoClaw-specific is in container.json (read by runner at startup).
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -442,8 +448,24 @@ async function buildContainerArgs(
     args.push('-e', 'HOME=/home/node');
   }
 
-  // Volume mounts
+  // Volume mounts.
+  // Apple Container 0.11 rejects file-source bind mounts ("not a directory").
+  // Skip those here — the files remain reachable via their parent directory
+  // mount. Loses the nested-RO guarantee but keeps the container alive.
+  // Exception: /app/CLAUDE.md is baked into the image (Dockerfile COPY), so
+  // skipping that nested mount is harmless.
   for (const mount of mounts) {
+    try {
+      if (fs.statSync(mount.hostPath).isFile() && CONTAINER_RUNTIME_BIN === 'container') {
+        log.debug('Skipping file mount (Apple Container requires directory sources)', {
+          hostPath: mount.hostPath,
+          containerPath: mount.containerPath,
+        });
+        continue;
+      }
+    } catch {
+      /* stat failed — let the runtime complain with its own error */
+    }
     if (mount.readonly) {
       args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
     } else {
