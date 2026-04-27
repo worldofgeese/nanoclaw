@@ -52,11 +52,18 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
   let pollCount = 0;
   while (true) {
+    // An idle but alive container is still alive — the host's absolute-ceiling
+    // sweep uses this file's mtime, and without an idle touch the mtime only
+    // advances while events are streaming inside processQuery. That left
+    // post-turn idle containers looking dead after 30 min and getting killed.
+    touchHeartbeat();
+
     // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
     const messages = getPendingMessages().filter((m) => m.kind !== 'system');
     pollCount++;
 
-    // Periodic heartbeat so we know the loop is alive
+    // Periodic log so we know the loop is alive (heartbeat file above is the
+    // machine-readable liveness signal; this is human-readable telemetry).
     if (pollCount % 30 === 0) {
       log(`Poll heartbeat (${pollCount} iterations, ${messages.length} pending)`);
     }
